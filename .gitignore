@@ -27,5 +27,6 @@ venv/
 # Ignore PyTorch model checkpoints
 *.pth
 
-# Ignore Jupyter Notebook checkpoints
+# Ignore Jupyter Notebook and checkpoints
+main.ipynb
 .ipynb_checkpoints/

@@ -81,6 +81,9 @@ class MainTrainer:
         self.args = args
         self.device = args.device
         
+        # private variables
+        self._best_acc = 0.
+
         # Model
         max_epochs = args.max_epochs
         self.max_epochs = max_epochs
@@ -138,6 +141,21 @@ class MainTrainer:
         s = ''.join(output_list)
         self.logger.info(f"Current config of the project: \n{s}")
 
+    ### Model Saving ###
+        
+    def save_model(self, prefix=None):
+        if prefix is None or prefix == 'epoch':
+            name = f"model_epoch_{self.current_epoch}.pth"
+        else:
+            name = f"model_{prefix}.pth"
+        save_path = Path(self.save_root) / name
+        torch.save(self.model.state_dict(), save_path)
+        self.logger.info(f"Saved model to {save_path}")
+    
+    def load_model(self, model_path):
+        self.model.load_state_dict(torch.load(model_path))
+        self.logger.info(f"Loaded model from {model_path}")
+
     ### Data ###
 
     def load_data(self):
@@ -152,12 +170,12 @@ class MainTrainer:
         val_length = self.args.val_length
 
         if data_length > all_length:
-            logger.warning(f"data_length larger than dataset size: {data_length}>{all_length}, "
+            logger.warning(f"data_length larger than dataset size: {all_length} < {data_length}, "
                            "Using all data")
             data_length = all_length
         try:
             if val_length > data_length:
-                raise ValueError(f"val_length larger than data_length: {val_length}>{data_length}")
+                raise ValueError(f"val_length larger than data_length: {data_length} < {val_length}")
         except ValueError as e:
             logger.exception(e)
             raise e
@@ -193,6 +211,7 @@ class MainTrainer:
 
             self.logger.info(f"Starting epoch {epoch}...")
             self.train_epoch()
+            self.save_model('epoch')
             self.valid()
 
     def train_epoch(self):
@@ -219,15 +238,46 @@ class MainTrainer:
             log_acc.append(acc)
 
             if batch_idx > 0 and batch_idx % self.train_log_interval == 0:
-                logger.info(f"Train epoch {self.current_epoch}, batch {batch_idx}, "
+                logger.info(f"Train batch {batch_idx}, "
                             f"loss {mean(log_loss):.8f}, acc {mean(log_acc):.5f}")
-                pass
 
-        logger.info(f"Summary: loss {mean(log_loss):.8f}, acc {mean(log_acc):.5f}")
+        logger.info(f"Summary Train epoch {self.current_epoch}:"
+                    f" loss {mean(log_loss):.8f}, acc {mean(log_acc):.5f}")
 
 
     def valid(self):
-        pass
+        logger = self.logger
+        self.model.eval()
+
+        log_acc = []
+        for batch_idx, data_dict in enumerate(self.val_loader):
+            img, label = data_dict['img'], data_dict['label']
+            img, label = img.to(self.device), label.to(self.device)
+            output = self.model(img)
+            
+            # Logging
+            pred = output.argmax(dim=1, keepdim=True)
+            label_truth = label.argmax(dim=1, keepdim=True)
+            correct = pred.eq(label_truth).sum().item()
+            acc = correct / len(label)
+            log_acc.append(acc)
+
+            do_log = (batch_idx > 0 and batch_idx % self.val_log_interval == 0)
+
+            if do_log:
+                logger.info(f"Val epoch {self.current_epoch}, batch {batch_idx}, "
+                            f"acc {mean(log_acc):.5f}")
+                pass
+        
+        curr_acc = mean(log_acc)
+        logger.info(f"Summary Val epoch {self.current_epoch}: acc {curr_acc:.5f}")
+
+        if curr_acc > self._best_acc:
+            self._best_acc = curr_acc
+            self.save_model('best')
+            logger.info(f"New best model saved with acc {curr_acc:.5f}")
+        
+
 
 if __name__ == '__main__':
     
