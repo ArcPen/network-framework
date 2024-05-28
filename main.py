@@ -79,8 +79,8 @@ class MainTrainer:
     def __init__(self, args):
 
         self.args = args
+        self.device = args.device
         
-
         # Model
         max_epochs = args.max_epochs
         self.max_epochs = max_epochs
@@ -100,11 +100,12 @@ class MainTrainer:
         self.train_loader, self.val_loader = self.load_data()
 
         # Load Model
-        self.model = PlainPredictor(
+        model = PlainPredictor(
             input_size=args.input_size,
             hidden_size=args.hidden_size,
             output_size=args.output_size
         )
+        self.model = model.to(self.device)
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=args.learning_rate)
         
@@ -201,6 +202,7 @@ class MainTrainer:
         log_acc = []
         for batch_idx, data_dict in enumerate(self.train_loader):
             img, label = data_dict['img'], data_dict['label']
+            img, label = img.to(self.device), label.to(self.device)
             output = self.model(img)
             
             loss = self.criterion(output, label)

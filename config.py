@@ -18,9 +18,9 @@ class Config:
     output_size:int = 10
 
     # Logging
-    train_log_interval:int = 20
+    train_log_interval:int = 200
     val_log_interval:int = 10
-    data_length:int = 1000
+    data_length:int = 1000000
     val_length:int = 10
 
     # Autimaticallg set attributes
