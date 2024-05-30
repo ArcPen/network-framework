@@ -9,7 +9,7 @@ class Config:
     device:str = 'cuda'
 
     # Data
-    data_root:str = 'dataset'
+    data_root:str = './data'
 
     # Model
     max_epochs:int = 10

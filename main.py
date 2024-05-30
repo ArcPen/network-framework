@@ -13,7 +13,7 @@ from collections import OrderedDict
 
 from config import Config
 from model.predictor import PlainPredictor
-from data.dataset import MNISTDataset
+from dataset.dataset import MNISTDataset
 
 
 def create_model(args):
