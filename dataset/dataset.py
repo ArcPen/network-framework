@@ -29,7 +29,7 @@ class MNISTDataset(Dataset):
             header = next(reader)
             for row in reader:
                 if mode == "train":
-                    label.append(int(row.pop()))
+                    label.append(int(row.pop(0)))
                 elif mode == "test":
                     label.append(0)
                 data_arr.append([int(i) for i in row])
