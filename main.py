@@ -74,6 +74,10 @@ class MainTrainer:
     def get_logger(self, save_root=None, file_name=None):
         logger = logging.getLogger(__name__)
         logger.setLevel(logging.DEBUG)
+        # remove handlers
+        for h in logger.handlers:
+            logger.removeHandler(h)
+            
         formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
         ch = logging.StreamHandler()
         ch.setFormatter(formatter)
