@@ -12,7 +12,7 @@ from datetime import datetime
 from collections import OrderedDict
 
 from config import Config
-from model.predictor import PlainPredictor
+from model.predictor import MLPPredictor
 from dataset.dataset import MNISTDataset
 
 
@@ -20,11 +20,7 @@ def create_model(args):
     ''' Create model based on the args. Change this if you want to
     use a different model.   
     '''
-    model = PlainPredictor(
-        input_size=args.input_size,
-        hidden_size=args.hidden_size,
-        output_size=args.output_size
-    )
+    model = MLPPredictor(**args.model_config)
     return model
 
 ##### Main #####
@@ -36,6 +32,7 @@ class MainTrainer:
         
         # private variables
         self._best_acc = 0.
+        self._best_epoch = 0
 
         # Model
         max_epochs = args.max_epochs
@@ -102,7 +99,12 @@ class MainTrainer:
         for attr in dir(self.args):
             if attr.startswith('_'):
                 continue
-            output_list.append(f'\n\t{attr:15} = {getattr(self.args, attr)},')
+            value = getattr(self.args, attr)
+            if isinstance(value, dict):
+                repr_str = ''.join([f'\n\t\t{k:15}= {v}' for k,v in value.items()])
+            else:
+                repr_str = str(value)
+            output_list.append(f'\n\t{attr:15} = {repr_str},')
         s = ''.join(output_list)
         self.logger.info(f"Current config of the project: \n{s}")
 
@@ -165,6 +167,7 @@ class MainTrainer:
     ### Training ###
 
     def train(self):
+        logger = self.logger
         epoch = self.current_epoch
         max_epochs = self.max_epochs
         while True:
@@ -175,10 +178,14 @@ class MainTrainer:
                 # self.tb_writer.close()
                 break
 
-            self.logger.info(f"Starting epoch {epoch}...")
+            logger.info(f"Starting epoch {epoch}...")
             self.train_epoch()
             self.save_model('epoch')
             self.valid()
+
+        logger.info(f"Training finished,"
+                    f" best acc {self._best_acc:.5f} at epoch {self._best_epoch}")
+
 
     def train_epoch(self):
         logger = self.logger
@@ -336,7 +343,8 @@ if __name__ == '__main__':
     trainer = MainTrainer(args)
     trainer.train()
 
-    model_path = '/disk1/user3/workspace/kaggle/0525-mnist-digits/experiments/project-testing/exp_0529_010011/model_best.pth'
+    # model_path = '/disk1/user3/workspace/kaggle/0525-mnist-digits/experiments/project-testing/exp_0529_010011/model_best.pth'
+    model_path = None
     tester = MainTester(args, model_path=model_path)
     tester.test()
 
