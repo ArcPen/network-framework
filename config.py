@@ -1,3 +1,4 @@
+from typing import Union
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +13,7 @@ class Config:
 
     # Model
     max_epochs:int = 10
+    batch_size:int = 32
     learning_rate:float = 0.001
     input_size:int = 28*28
     hidden_size:int = 128
@@ -20,6 +22,7 @@ class Config:
     # Logging
     train_log_interval:int = 200
     val_log_interval:int = 50
+    test_log_interval: Union[int, float] = 0.1 # int for fixed interval, float for percentage
     data_length:int = 42000
     val_length:int = 1000
 

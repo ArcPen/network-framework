@@ -16,21 +16,30 @@ from config import Config
 ##### Data #####
 
 class MNISTDataset(Dataset):
-    def __init__(self, root):
+    def __init__(self, root, mode='train'):
         root = Path(root)
-        self.load_data(root)
+        self.load_data(root, mode)
         self.root = root.as_posix()
 
-    def load_data(self, root):
-        csv_file = root / 'train.csv'
+    def load_data(self, root, mode):
+        if mode == "train":
+            file = "train.csv"
+        elif mode == "test":
+            file = "test.csv"
+        else:
+            raise ValueError(f"Mode {mode} not recognized")
+        csv_file = root / file
         label = []
         data_arr = []
         with open(csv_file) as f:
             reader = csv.reader(f)
             header = next(reader)
             for row in reader:
-                label.append(int(row[0]))
-                data_arr.append([int(i) for i in row[1:]])
+                if mode == "train":
+                    label.append(int(row.pop()))
+                elif mode == "test":
+                    label.append(0)
+                data_arr.append([int(i) for i in row])
                 
         data_arr = np.array(data_arr)
 
@@ -48,7 +57,7 @@ class MNISTDataset(Dataset):
             img=img,
             label=label,
             metadata=OrderedDict(
-                idx=idx,
+                idx=idx+1,
             )
         )
         return data_dict
@@ -96,11 +105,19 @@ class MainTrainer:
         save_root.mkdir(parents=True, exist_ok=True)
         self.logger = self.get_logger(save_root)
         self.save_root = save_root.as_posix()
-        self.train_log_interval = args.train_log_interval
-        self.val_log_interval = args.val_log_interval
 
         # Load data
         self.train_loader, self.val_loader = self.load_data()
+
+        # Log interval
+        train_log_interval = args.train_log_interval
+        if 0 < train_log_interval < 1:
+            train_log_interval = int(len(self.train_loader) * train_log_interval)
+        self.train_log_interval = train_log_interval
+        val_log_interval = args.val_log_interval
+        if 0 < val_log_interval < 1:
+            val_log_interval = int(len(self.val_loader) * val_log_interval)
+        self.val_log_interval = val_log_interval
 
         # Load Model
         model = PlainPredictor(
@@ -114,7 +131,7 @@ class MainTrainer:
         
     ### Logging ###
         
-    def get_logger(self, save_root=None):
+    def get_logger(self, save_root=None, file_name=None):
         logger = logging.getLogger(__name__)
         logger.setLevel(logging.DEBUG)
         formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
@@ -123,7 +140,11 @@ class MainTrainer:
         logger.addHandler(ch)
 
         if save_root is not None:
-            log_file = (save_root / save_root.name).with_suffix('.log')
+            save_root = Path(save_root)
+            save_root.mkdir(parents=True, exist_ok=True)
+            if file_name is None:
+                file_name = save_root.name
+            log_file = (save_root / file_name).with_suffix('.log')
             fh = logging.FileHandler(log_file)
             fh.setFormatter(formatter)
             logger.addHandler(fh)
@@ -168,6 +189,7 @@ class MainTrainer:
         all_length = len(dataset)
         data_length = self.args.data_length
         val_length = self.args.val_length
+        batch_size = self.args.batch_size
 
         if data_length > all_length:
             logger.warning(f"data_length larger than dataset size: {all_length} < {data_length}, "
@@ -189,8 +211,8 @@ class MainTrainer:
         else:
             train_dataset, val_dataset = random_split(dataset, [train_length, val_length])
 
-        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
         logger.info(f"Loaded data from {data_root}, "
                     f"Total {all_length}, train: {train_length}, val: {val_length}")
@@ -216,6 +238,7 @@ class MainTrainer:
 
     def train_epoch(self):
         logger = self.logger
+        self.model.train()
 
         log_loss = []
         log_acc = []
@@ -238,7 +261,7 @@ class MainTrainer:
             log_acc.append(acc)
 
             if batch_idx > 0 and batch_idx % self.train_log_interval == 0:
-                logger.info(f"Train batch {batch_idx}, "
+                logger.info(f"Train batch {batch_idx}/{len(self.train_loader)}, "
                             f"loss {mean(log_loss):.8f}, acc {mean(log_acc):.5f}")
 
         logger.info(f"Summary Train epoch {self.current_epoch}:"
@@ -265,7 +288,7 @@ class MainTrainer:
             do_log = (batch_idx > 0 and batch_idx % self.val_log_interval == 0)
 
             if do_log:
-                logger.info(f"Val epoch {self.current_epoch}, batch {batch_idx}, "
+                logger.info(f"Val batch {batch_idx}/{len(self.val_loader)}, "
                             f"acc {mean(log_acc):.5f}")
                 pass
         
@@ -276,15 +299,106 @@ class MainTrainer:
             self._best_acc = curr_acc
             self.save_model('best')
             logger.info(f"New best model saved with acc {curr_acc:.5f}")
+
+
+class MainTester(MainTrainer):
+    ''' The test and training process should be two separated processes, where in one you
+    have GT and in the other you don't. So they are seperated into two classes.
+
+    Possible methods of usage:
+    1. Pass the args from an training process to it, note that config would change
+       each time generated.
+    2. Use same args as training process, but provide model_path to specify model 
+       to load. In this case, folder of the model is used as save_root.
+
+    '''
+    def __init__(self, args, model_path=None):
+        self.args = args
+        self.device = args.device
+
+        if model_path is None:
+            save_root = Path(args.experiment_root) / args.experiment_name
+            model_path = save_root / 'model_best.pth'
+        else:
+            model_path = Path(model_path)
+            save_root = model_path.parent
+        save_root = save_root / 'test_out'
+        self.logger = self.get_logger(
+            save_root, file_name=args.experiment_name)
+        self.save_root = save_root.as_posix()
         
+        # Model
+        model = PlainPredictor(
+            input_size=args.input_size,
+            hidden_size=args.hidden_size,
+            output_size=args.output_size
+        )
+        self.model = model.to(self.device)
+        self.load_model(model_path)
+        
+        test_loader = self.load_data()
+        self.test_loader = test_loader
+
+        test_log_interval = args.test_log_interval
+        if 0 < test_log_interval < 1:
+            test_log_interval = int(len(test_loader) * test_log_interval)
+        self.test_log_interval = test_log_interval
+
+    def load_data(self):
+        data_root = self.args.data_root
+        batch_size = self.args.batch_size
+
+        dataset = MNISTDataset(data_root, mode='test')
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        return loader
+        
+    def test(self):
+        logger = self.logger
+        self.model.eval()
+
+        results = []
+        for batch_idx, data_dict in enumerate(self.test_loader):
+            img, idx = data_dict['img'], data_dict['metadata']['idx']
+            img = img.to(self.device)
+            output = self.model(img)
+            
+            # Logging
+            pred = output.argmax(dim=1, keepdim=False)
+            results.extend(zip(idx.tolist(), pred.tolist()))
+
+            do_log = (batch_idx > 0 and batch_idx % self.test_log_interval == 0)
+            if do_log:
+                logger.info(f"Test, batch {batch_idx}/{len(self.test_loader)}")
+        
+        logger.info(f"Saving results...")
+
+        save_path = Path(self.save_root) / self.args.experiment_name
+        save_path = save_path.with_suffix('.csv')
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(save_path, 'w') as f:
+            writer = csv.writer(f)
+            writer.writerow(['ImageId', 'Label'])
+            writer.writerows(results)
+        logger.info(f"Results saved to {save_path}")
+
+
+    def train(self):
+        raise NotImplementedError("Test process don't have this.")
+    
+    def valid(self):
+        raise NotImplementedError("Test process don't have this.")
 
 
 if __name__ == '__main__':
     
     args = Config()
 
-    trainer = MainTrainer(args)
-    trainer.train()
+    # trainer = MainTrainer(args)
+    # trainer.train()
+
+    model_path = '/disk1/user3/workspace/kaggle/0525-mnist-digits/experiments/project-testing/exp_0529_010011/model_best.pth'
+    tester = MainTester(args, model_path=model_path)
+    tester.test()
 
 
 
