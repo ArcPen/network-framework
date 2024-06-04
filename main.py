@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 
 import csv
@@ -12,76 +12,16 @@ from datetime import datetime
 from collections import OrderedDict
 
 from config import Config
-
-##### Data #####
-
-class MNISTDataset(Dataset):
-    def __init__(self, root, mode='train'):
-        root = Path(root)
-        self.load_data(root, mode)
-        self.root = root.as_posix()
-
-    def load_data(self, root, mode):
-        if mode == "train":
-            file = "train.csv"
-        elif mode == "test":
-            file = "test.csv"
-        else:
-            raise ValueError(f"Mode {mode} not recognized")
-        csv_file = root / file
-        label = []
-        data_arr = []
-        with open(csv_file) as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            for row in reader:
-                if mode == "train":
-                    label.append(int(row.pop()))
-                elif mode == "test":
-                    label.append(0)
-                data_arr.append([int(i) for i in row])
-                
-        data_arr = np.array(data_arr)
-
-        num_classes = len(set(label))
-        eye = np.eye(num_classes)
-        label = np.array([eye[i] for i in label]) # one-hot encoding
-        
-        self.label = label
-        self.data = data_arr
-
-    def __getitem__(self, idx):
-        img = torch.tensor(self.data[idx]).float()
-        label = torch.tensor(self.label[idx]).float()
-        data_dict = OrderedDict(
-            img=img,
-            label=label,
-            metadata=OrderedDict(
-                idx=idx+1,
-            )
-        )
-        return data_dict
-
-    def __len__(self):
-        return len(self.label)
-
-    def __repr__(self):
-        return f'MNISTDataset(root={self.root})'
+from model.predictor import MLPPredictor
+from dataset.dataset import MNISTDataset
 
 
-##### Model #####
-    
-class PlainPredictor(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super(PlainPredictor, self).__init__()
-        self.model = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, output_size)
-        )
-
-    def forward(self, x):
-        return self.model(x)
+def create_model(args):
+    ''' Create model based on the args. Change this if you want to
+    use a different model.   
+    '''
+    model = MLPPredictor(**args.model_config)
+    return model
 
 ##### Main #####
 class MainTrainer:
@@ -92,6 +32,7 @@ class MainTrainer:
         
         # private variables
         self._best_acc = 0.
+        self._best_epoch = 0
 
         # Model
         max_epochs = args.max_epochs
@@ -120,11 +61,7 @@ class MainTrainer:
         self.val_log_interval = val_log_interval
 
         # Load Model
-        model = PlainPredictor(
-            input_size=args.input_size,
-            hidden_size=args.hidden_size,
-            output_size=args.output_size
-        )
+        model = create_model(args)
         self.model = model.to(self.device)
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=args.learning_rate)
@@ -134,6 +71,10 @@ class MainTrainer:
     def get_logger(self, save_root=None, file_name=None):
         logger = logging.getLogger(__name__)
         logger.setLevel(logging.DEBUG)
+        # remove handlers
+        for h in logger.handlers:
+            logger.removeHandler(h)
+            
         formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
         ch = logging.StreamHandler()
         ch.setFormatter(formatter)
@@ -158,7 +99,12 @@ class MainTrainer:
         for attr in dir(self.args):
             if attr.startswith('_'):
                 continue
-            output_list.append(f'\n\t{attr:15} = {getattr(self.args, attr)},')
+            value = getattr(self.args, attr)
+            if isinstance(value, dict):
+                repr_str = ''.join([f'\n\t\t{k:15}= {v}' for k,v in value.items()])
+            else:
+                repr_str = str(value)
+            output_list.append(f'\n\t{attr:15} = {repr_str},')
         s = ''.join(output_list)
         self.logger.info(f"Current config of the project: \n{s}")
 
@@ -221,6 +167,7 @@ class MainTrainer:
     ### Training ###
 
     def train(self):
+        logger = self.logger
         epoch = self.current_epoch
         max_epochs = self.max_epochs
         while True:
@@ -231,10 +178,14 @@ class MainTrainer:
                 # self.tb_writer.close()
                 break
 
-            self.logger.info(f"Starting epoch {epoch}...")
+            logger.info(f"Starting epoch {epoch}...")
             self.train_epoch()
             self.save_model('epoch')
             self.valid()
+
+        logger.info(f"Training finished,"
+                    f" best acc {self._best_acc:.5f} at epoch {self._best_epoch}")
+
 
     def train_epoch(self):
         logger = self.logger
@@ -328,11 +279,7 @@ class MainTester(MainTrainer):
         self.save_root = save_root.as_posix()
         
         # Model
-        model = PlainPredictor(
-            input_size=args.input_size,
-            hidden_size=args.hidden_size,
-            output_size=args.output_size
-        )
+        model = create_model(args)
         self.model = model.to(self.device)
         self.load_model(model_path)
         
@@ -393,10 +340,11 @@ if __name__ == '__main__':
     
     args = Config()
 
-    # trainer = MainTrainer(args)
-    # trainer.train()
+    trainer = MainTrainer(args)
+    trainer.train()
 
-    model_path = '/disk1/user3/workspace/kaggle/0525-mnist-digits/experiments/project-testing/exp_0529_010011/model_best.pth'
+    # model_path = '/disk1/user3/workspace/kaggle/0525-mnist-digits/experiments/project-testing/exp_0529_010011/model_best.pth'
+    model_path = None
     tester = MainTester(args, model_path=model_path)
     tester.test()
 

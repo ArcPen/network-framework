@@ -1,5 +1,5 @@
 # Ignore dataset
-dataset/
+data/
 
 # Ignore cache
 __pycache__/
